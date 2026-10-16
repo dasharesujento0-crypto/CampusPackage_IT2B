@@ -1,4 +1,4 @@
-        package com.scc.dao;
+package com.scc.dao;
 
 import com.scc.model.User;
 

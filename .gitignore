@@ -37,3 +37,15 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# IntelliJ IDEA settings
+.idea/
+
+# Local SQLite databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Build output
+target/
