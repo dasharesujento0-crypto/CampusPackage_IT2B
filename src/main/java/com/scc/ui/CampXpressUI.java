@@ -4,6 +4,7 @@ import com.scc.dao.DepartmentDao;
 import com.scc.dao.PackageDao;
 import com.scc.dao.RecipientDao;
 import com.scc.dao.UserDao;
+import com.scc.ui.AdminMenu;
 import com.scc.model.Department;
 import com.scc.model.PackageItem;
 import com.scc.model.Recipient;
@@ -14,20 +15,71 @@ import java.util.Scanner;
 
 public class CampXpressUI {
 
-    private final Scanner sc;
-    private final UserDao userDao;
+    private final Scanner sc = new Scanner(System.in);
+    private final UserDao userDao = new UserDao();
     private final DepartmentDao departmentDao = new DepartmentDao();
     private final RecipientDao recipientDao = new RecipientDao();
     private final PackageDao packageDao = new PackageDao();
 
-    public CampXpressUI(UserDao userDao, Scanner scanner) {
-        this.userDao = java.util.Objects.requireNonNull(userDao, "userDao");
-        this.sc = java.util.Objects.requireNonNull(scanner, "scanner");
+    // ================= MAIN MENU =================
+
+    public void run() {
+        boolean running = true;
+
+        while (running) {
+            System.out.println("\n========================================");
+            System.out.println("              CAMPXPRESS");
+            System.out.println(" CAMPUS PACKAGE CLAIM & TRACKING SYSTEM");
+            System.out.println("========================================");
+            System.out.println("1. Login");
+            System.out.println("2. Register");
+            System.out.println("3. Exit");
+            System.out.print("Choose an option: ");
+
+            String choice = sc.nextLine().trim();
+
+            switch (choice) {
+                case "1":
+                    User loggedInUser = login();
+
+                    if (loggedInUser != null) {
+                        running = userSession(loggedInUser);
+                    }
+                    break;
+
+                case "2":
+                    register();
+                    break;
+
+                case "3":
+                    running = false;
+                    System.out.println(
+                            "\nThank you for using CampXpress. Goodbye!"
+                    );
+                    break;
+
+                default:
+                    System.out.println(
+                            "\nInvalid option! Please choose 1, 2, or 3."
+                    );
+            }
+        }
+
+        sc.close();
     }
 
-    /** Runs the authenticated user's role-based session menu. */
-    public boolean runUserSession(User user) {
-        return userSession(user);
+    // ================= LOGIN =================
+
+    private User login() {
+        System.out.println("\n----------- CAMPXPRESS LOGIN -----------");
+
+        System.out.print("Enter username: ");
+        String username = sc.nextLine().trim();
+
+        System.out.print("Enter password: ");
+        String password = sc.nextLine();
+
+        return userDao.loginUser(username, password);
     }
 
     // ================= USER SESSION =================
@@ -92,7 +144,7 @@ public class CampXpressUI {
 
                 case "7":
                     if ("SYSTEM_ADMINISTRATOR".equalsIgnoreCase(user.role())) {
-                        accountApprovalMenu();
+                        new AdminMenu(sc, userDao).run();
                     } else {
                         System.out.println(
                                 "Access denied. Only the System Administrator can manage account approvals."
@@ -148,6 +200,58 @@ public class CampXpressUI {
                         "Unrecognized role. Please contact the administrator."
                 );
         }
+    }
+
+    // ================= USER REGISTRATION =================
+
+    private void register() {
+        System.out.println("\n---------- CAMPXPRESS REGISTER ---------");
+
+        System.out.print("Enter full name: ");
+        String fullName = sc.nextLine().trim();
+
+        System.out.print("Enter new username: ");
+        String username = sc.nextLine().trim();
+
+        System.out.print("Enter password: ");
+        String password = sc.nextLine();
+
+        if (fullName.isEmpty()
+                || username.isEmpty()
+                || password.isEmpty()) {
+            System.out.println(
+                    "Registration failed: Fields cannot be empty."
+            );
+            return;
+        }
+
+        // Public registration does not allow users to assign themselves
+        // administrator privileges.
+        System.out.println("\nSelect Role:");
+        System.out.println("[1] Package Staff");
+        System.out.println("[2] Department / Office Representative");
+        System.out.print("Choose a role: ");
+
+        String roleChoice = sc.nextLine().trim();
+        String role;
+
+        switch (roleChoice) {
+            case "1":
+                role = "PACKAGE_STAFF";
+                break;
+
+            case "2":
+                role = "DEPARTMENT_OFFICE_REPRESENTATIVE";
+                break;
+
+            default:
+                System.out.println(
+                        "Invalid role selection. Please choose 1 or 2."
+                );
+                return;
+        }
+
+        userDao.registerUser(username, password, fullName, role);
     }
 
     // ================= DEPARTMENT MANAGEMENT =================
