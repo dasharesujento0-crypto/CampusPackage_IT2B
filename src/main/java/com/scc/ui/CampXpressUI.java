@@ -1,10 +1,10 @@
+
 package com.scc.ui;
 
 import com.scc.dao.DepartmentDao;
 import com.scc.dao.PackageDao;
 import com.scc.dao.RecipientDao;
 import com.scc.dao.UserDao;
-import com.scc.ui.AdminMenu;
 import com.scc.model.Department;
 import com.scc.model.PackageItem;
 import com.scc.model.Recipient;
@@ -225,8 +225,8 @@ public class CampXpressUI {
             return;
         }
 
-        // Public registration does not allow users to assign themselves
-        // administrator privileges.
+        // Public registration does not allow users to assign
+        // themselves administrator privileges.
         System.out.println("\nSelect Role:");
         System.out.println("[1] Package Staff");
         System.out.println("[2] Department / Office Representative");
@@ -499,7 +499,8 @@ public class CampXpressUI {
             System.out.println("========================================");
             System.out.println("1. Register Package");
             System.out.println("2. View All Packages");
-            System.out.println("3. Back to Home");
+            System.out.println("3. Export Package Summary to CSV");
+            System.out.println("4. Back to Home");
             System.out.print("Choose an option: ");
 
             String choice = sc.nextLine().trim();
@@ -514,12 +515,16 @@ public class CampXpressUI {
                     break;
 
                 case "3":
+                    exportPackageSummary();
+                    break;
+
+                case "4":
                     inMenu = false;
                     break;
 
                 default:
                     System.out.println(
-                            "Invalid option! Please choose 1, 2, or 3."
+                            "Invalid option! Please choose 1, 2, 3, or 4."
                     );
             }
         }
@@ -618,6 +623,35 @@ public class CampXpressUI {
         }
 
         System.out.println("\nTotal packages: " + packages.size());
+    }
+
+    // ================= CSV EXPORT =================
+
+    private void exportPackageSummary() {
+        System.out.println("\n--- EXPORT PACKAGE SUMMARY TO CSV ---");
+
+        System.out.print("Enter start date (YYYY-MM-DD): ");
+        String fromDate = sc.nextLine().trim();
+
+        System.out.print("Enter end date (YYYY-MM-DD): ");
+        String toDate = sc.nextLine().trim();
+
+        if (!fromDate.matches("\\d{4}-\\d{2}-\\d{2}")
+                || !toDate.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            System.out.println(
+                    "Invalid date format. Please use YYYY-MM-DD."
+            );
+            return;
+        }
+
+        if (fromDate.compareTo(toDate) > 0) {
+            System.out.println(
+                    "Invalid date range. The start date must not be after the end date."
+            );
+            return;
+        }
+
+        packageDao.exportSummaryCsv(fromDate, toDate);
     }
 
     // ================= ACCOUNT APPROVAL =================

@@ -1,8 +1,13 @@
-
 package com.scc.dao;
 
 import com.scc.model.PackageItem;
 
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -43,8 +48,7 @@ public class PackageDao {
                 """;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, trackingNumber.trim());
             statement.setString(2, senderName.trim());
@@ -99,12 +103,12 @@ public class PackageDao {
                 ORDER BY p.Package_ID DESC
                 """;
 
-        String term = "%" + (searchTerm == null
-                ? "" : searchTerm.trim()) + "%";
+        String term = "%"
+                + (searchTerm == null ? "" : searchTerm.trim())
+                + "%";
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             for (int i = 1; i <= 4; i++) {
                 statement.setString(i, term);
@@ -153,8 +157,7 @@ public class PackageDao {
                 """;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, status);
             statement.setString(2, trackingNumber.trim());
@@ -203,8 +206,7 @@ public class PackageDao {
                 """;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, claimantName.trim());
             statement.setString(2, identification.trim());
@@ -233,7 +235,10 @@ public class PackageDao {
         return false;
     }
 
-    public boolean returnPackage(String trackingNumber, String dateReturned) {
+    public boolean returnPackage(
+            String trackingNumber,
+            String dateReturned
+    ) {
         if (blank(trackingNumber) || blank(dateReturned)) {
             return false;
         }
@@ -247,8 +252,7 @@ public class PackageDao {
                 """;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, dateReturned.trim());
             statement.setString(2, trackingNumber.trim());
@@ -287,8 +291,7 @@ public class PackageDao {
                 """;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, trackingNumber.trim());
 
@@ -326,8 +329,7 @@ public class PackageDao {
                 """;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
 
             statement.setString(1, fromDate.trim());
             statement.setString(2, toDate.trim());
@@ -359,6 +361,76 @@ public class PackageDao {
                     "Report failed: " + e.getMessage()
             );
         }
+    }
+
+    // ================= CSV EXPORT =================
+
+    public boolean exportSummaryCsv(String fromDate, String toDate) {
+        if (blank(fromDate) || blank(toDate)
+                || fromDate.compareTo(toDate) > 0) {
+            System.out.println("Invalid report date range.");
+            return false;
+        }
+
+        String sql = """
+                SELECT Package_Status, COUNT(*) AS Total
+                FROM Packages
+                WHERE Date_Received BETWEEN ? AND ?
+                  AND Package_Status <> 'REMOVED'
+                GROUP BY Package_Status
+                ORDER BY Package_Status
+                """;
+
+        Path outputPath = Path.of("CampXpress_Report.csv");
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+
+            statement.setString(1, fromDate.trim());
+            statement.setString(2, toDate.trim());
+
+            try (ResultSet result = statement.executeQuery();
+                 BufferedWriter writer = Files.newBufferedWriter(
+                         outputPath,
+                         StandardCharsets.UTF_8,
+                         StandardOpenOption.CREATE,
+                         StandardOpenOption.TRUNCATE_EXISTING,
+                         StandardOpenOption.WRITE)) {
+
+                writer.write("Start Date,End Date,Package Status,Total");
+                writer.newLine();
+
+                while (result.next()) {
+                    writer.write(
+                            csv(fromDate.trim()) + ","
+                                    + csv(toDate.trim()) + ","
+                                    + csv(result.getString("Package_Status")) + ","
+                                    + result.getInt("Total")
+                    );
+                    writer.newLine();
+                }
+            }
+
+            System.out.println(
+                    "CSV report exported successfully to: "
+                            + outputPath.toAbsolutePath()
+            );
+            return true;
+
+        } catch (SQLException | IOException e) {
+            System.out.println(
+                    "CSV export failed: " + e.getMessage()
+            );
+            return false;
+        }
+    }
+
+    private String csv(String value) {
+        if (value == null) {
+            return "\"\"";
+        }
+
+        return "\"" + value.replace("\"", "\"\"") + "\"";
     }
 
     private boolean blank(String value) {
