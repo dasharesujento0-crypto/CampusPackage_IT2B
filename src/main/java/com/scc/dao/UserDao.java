@@ -1,3 +1,4 @@
+
 package com.scc.dao;
 
 import com.scc.model.User;
@@ -8,162 +9,184 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class UserDao {
 
-    // REGISTER NEW USER
+    private static final Set<String> PUBLIC_ROLES = Set.of(
+            "PACKAGE_STAFF",
+            "DEPARTMENT_OFFICE_REPRESENTATIVE"
+    );
+
     public boolean registerUser(
             String username,
             String password,
             String fullName,
             String role
     ) {
+        if (username == null || username.isBlank()
+                || password == null || password.isBlank()
+                || fullName == null || fullName.isBlank()
+                || role == null) {
+            System.out.println("Registration failed: Fields cannot be empty.");
+            return false;
+        }
+
+        String normalizedRole = role.trim().toUpperCase(Locale.ROOT);
+
+        if (!PUBLIC_ROLES.contains(normalizedRole)) {
+            System.out.println(
+                    "Registration failed: Invalid public registration role."
+            );
+            return false;
+        }
+
         String sql = """
                 INSERT INTO Users
-                (Username, Password, Full_Name, Role, Account_Status)
+                    (Username, Password, Full_Name, Role, Account_Status)
                 VALUES (?, ?, ?, ?, 'PENDING')
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
 
-            pstmt.setString(1, username);
-            pstmt.setString(2, password);
-            pstmt.setString(3, fullName);
-            pstmt.setString(4, role.toUpperCase());
+            statement.setString(1, username.trim());
+            statement.setString(2, password);
+            statement.setString(3, fullName.trim());
+            statement.setString(4, normalizedRole);
 
-            pstmt.executeUpdate();
-
-            System.out.println(
-                    "-> Successful registration! Waiting for approval."
-            );
-
-            return true;
+            if (statement.executeUpdate() == 1) {
+                System.out.println(
+                        "Registration successful. "
+                                + "Please wait for account approval."
+                );
+                return true;
+            }
 
         } catch (SQLException e) {
-            System.err.println(
-                    "Registration failed: " + e.getMessage()
-            );
-
-            return false;
+            if (e.getMessage() != null
+                    && e.getMessage().toLowerCase(Locale.ROOT)
+                    .contains("unique")) {
+                System.out.println(
+                        "Registration failed: Username already exists."
+                );
+            } else {
+                System.out.println(
+                        "Registration failed: " + e.getMessage()
+                );
+            }
         }
+
+        return false;
     }
 
-    // LOGIN USER
     public User loginUser(String username, String password) {
+        if (username == null || username.isBlank()
+                || password == null || password.isEmpty()) {
+            System.out.println(
+                    "Login failed: Username and password are required."
+            );
+            return null;
+        }
 
         String sql = """
-                SELECT Users_ID, Username, Password,
-                       Full_Name, Role, Account_Status
+                SELECT Users_ID, Username, Password, Full_Name,
+                       Role, Account_Status
                 FROM Users
                 WHERE Username = ?
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
 
-            pstmt.setString(1, username);
+            statement.setString(1, username.trim());
 
-            try (ResultSet rs = pstmt.executeQuery()) {
-
-                if (!rs.next()) {
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()
+                        || !password.equals(result.getString("Password"))) {
                     System.out.println(
                             "Login failed: Invalid username or password."
                     );
                     return null;
                 }
 
-                String storedPassword = rs.getString("Password");
-
-                // Temporary plain-text comparison for this prototype.
-                if (!storedPassword.equals(password)) {
-                    System.out.println(
-                            "Login failed: Invalid username or password."
-                    );
-                    return null;
-                }
-
-                String status = rs.getString("Account_Status");
+                String status = result.getString("Account_Status");
 
                 if (!"APPROVED".equalsIgnoreCase(status)) {
                     System.out.println(
-                            "Login denied: Your account is not approved yet."
+                            "Login denied. Account status: " + status
                     );
                     return null;
                 }
 
                 User user = new User(
-                        rs.getInt("Users_ID"),
-                        rs.getString("Username"),
-                        storedPassword,
-                        rs.getString("Full_Name"),
-                        rs.getString("Role"),
+                        result.getInt("Users_ID"),
+                        result.getString("Username"),
+                        result.getString("Password"),
+                        result.getString("Full_Name"),
+                        result.getString("Role"),
                         status
                 );
 
-                System.out.println(
-                        "Login successful. Welcome, "
-                                + user.fullName() + "!"
-                );
-
+                System.out.println("Login successful. Welcome!");
                 return user;
             }
 
         } catch (SQLException e) {
-            System.err.println("Login error: " + e.getMessage());
+            System.out.println("Login failed: " + e.getMessage());
             return null;
         }
     }
 
-    // GET ALL ACCOUNTS WAITING FOR APPROVAL
     public List<User> getPendingUsers() {
-
-        List<User> pendingUsers = new ArrayList<>();
+        List<User> users = new ArrayList<>();
 
         String sql = """
-                SELECT Users_ID, Username, Password,
-                       Full_Name, Role, Account_Status
+                SELECT Users_ID, Username, Password, Full_Name,
+                       Role, Account_Status
                 FROM Users
                 WHERE Account_Status = 'PENDING'
                 ORDER BY Users_ID
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(sql);
+             ResultSet result = statement.executeQuery()) {
 
-            while (rs.next()) {
-                User user = new User(
-                        rs.getInt("Users_ID"),
-                        rs.getString("Username"),
-                        rs.getString("Password"),
-                        rs.getString("Full_Name"),
-                        rs.getString("Role"),
-                        rs.getString("Account_Status")
-                );
-
-                pendingUsers.add(user);
+            while (result.next()) {
+                users.add(new User(
+                        result.getInt("Users_ID"),
+                        result.getString("Username"),
+                        result.getString("Password"),
+                        result.getString("Full_Name"),
+                        result.getString("Role"),
+                        result.getString("Account_Status")
+                ));
             }
 
         } catch (SQLException e) {
-            System.err.println(
-                    "Error retrieving pending accounts: " + e.getMessage()
+            System.out.println(
+                    "Unable to load pending users: " + e.getMessage()
             );
         }
 
-        return pendingUsers;
+        return users;
     }
 
-    // APPROVE OR REJECT A PENDING ACCOUNT
     public boolean updateAccountStatus(int userId, String newStatus) {
+        if (userId <= 0 || newStatus == null) {
+            System.out.println("Invalid user ID or account status.");
+            return false;
+        }
 
-        if (newStatus == null
-                || (!newStatus.equalsIgnoreCase("APPROVED")
-                && !newStatus.equalsIgnoreCase("REJECTED"))) {
+        String status = newStatus.trim().toUpperCase(Locale.ROOT);
 
-            System.out.println(
-                    "Invalid status. Use APPROVED or REJECTED."
-            );
+        if (!Set.of("APPROVED", "REJECTED").contains(status)) {
+            System.out.println("Invalid account status.");
             return false;
         }
 
@@ -174,32 +197,31 @@ public class UserDao {
                   AND Account_Status = 'PENDING'
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
 
-            pstmt.setString(1, newStatus.toUpperCase());
-            pstmt.setInt(2, userId);
+            statement.setString(1, status);
+            statement.setInt(2, userId);
 
-            int rowsUpdated = pstmt.executeUpdate();
-
-            if (rowsUpdated > 0) {
+            if (statement.executeUpdate() == 1) {
                 System.out.println(
-                        "Account status updated to "
-                                + newStatus.toUpperCase() + "."
+                        "Account " + status.toLowerCase(Locale.ROOT)
+                                + " successfully."
                 );
                 return true;
-            } else {
-                System.out.println(
-                        "Account not found or is no longer pending."
-                );
-                return false;
             }
 
-        } catch (SQLException e) {
-            System.err.println(
-                    "Error updating account status: " + e.getMessage()
+            System.out.println(
+                    "No pending account found for User ID " + userId + "."
             );
-            return false;
+
+        } catch (SQLException e) {
+            System.out.println(
+                    "Unable to update account status: " + e.getMessage()
+            );
         }
+
+        return false;
     }
 }

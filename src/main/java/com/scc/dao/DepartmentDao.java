@@ -6,45 +6,48 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
 public class DepartmentDao {
 
     public boolean registerDepartment(
-            String departmentName,
-            String departmentType,
-            String contactNumber
+            String name,
+            String type,
+            String contact
     ) {
+        if (name == null || name.isBlank()
+                || type == null || type.isBlank()
+                || contact == null || contact.isBlank()) {
+            System.out.println("All department fields are required.");
+            return false;
+        }
+
         String sql = """
                 INSERT INTO Department_Offices
-                (Department_Name, Department_Type,
-                 Contact_Number, Department_Status)
+                    (Department_Name, Department_Type,
+                     Contact_Number, Department_Status)
                 VALUES (?, ?, ?, 'ACTIVE')
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
 
-            pstmt.setString(1, departmentName);
-            pstmt.setString(2, departmentType);
-            pstmt.setString(3, contactNumber);
+            statement.setString(1, name.trim());
+            statement.setString(2, type.trim());
+            statement.setString(3, contact.trim());
 
-            int rowsAffected = pstmt.executeUpdate();
-
-            if (rowsAffected == 1) {
-                System.out.println("Department registered successfully!");
-                return true;
-            }
-
-            System.out.println("Department was not registered.");
-            return false;
+            return statement.executeUpdate() == 1;
 
         } catch (SQLException e) {
-            System.out.println("Department registration failed: "
-                    + e.getMessage());
-            return false;
+            System.out.println(
+                    "Department registration failed: " + e.getMessage()
+            );
         }
+
+        return false;
     }
 
     public List<Department> getAllDepartments() {
@@ -52,31 +55,29 @@ public class DepartmentDao {
 
         String sql = """
                 SELECT Department_ID, Department_Name,
-                       Department_Type, Contact_Number,
-                       Department_Status
+                       Department_Type, Contact_Number, Department_Status
                 FROM Department_Offices
                 ORDER BY Department_ID
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(sql)) {
 
-            while (rs.next()) {
-                Department department = new Department(
-                        rs.getInt("Department_ID"),
-                        rs.getString("Department_Name"),
-                        rs.getString("Department_Type"),
-                        rs.getString("Contact_Number"),
-                        rs.getString("Department_Status")
-                );
-
-                departments.add(department);
+            while (result.next()) {
+                departments.add(new Department(
+                        result.getInt("Department_ID"),
+                        result.getString("Department_Name"),
+                        result.getString("Department_Type"),
+                        result.getString("Contact_Number"),
+                        result.getString("Department_Status")
+                ));
             }
 
         } catch (SQLException e) {
-            System.out.println("Unable to load departments: "
-                    + e.getMessage());
+            System.out.println(
+                    "Unable to load departments: " + e.getMessage()
+            );
         }
 
         return departments;

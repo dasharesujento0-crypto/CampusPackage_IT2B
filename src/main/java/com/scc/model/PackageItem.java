@@ -1,3 +1,4 @@
+
 package com.scc.model;
 
 public record PackageItem(
@@ -13,7 +14,8 @@ public record PackageItem(
     public String toString() {
         return String.format(
                 "[%d] Tracking: %s | Recipient ID: %d | Sender: %s"
-                        + "\n    Description: %s | Date Received: %s | Status: %s",
+                        + "\n    Description: %s | Date Received: %s"
+                        + " | Status: %s",
                 packageId,
                 trackingNumber,
                 recipientId,

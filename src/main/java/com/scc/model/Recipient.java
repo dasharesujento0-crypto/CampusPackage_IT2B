@@ -13,7 +13,8 @@ public record Recipient(
     @Override
     public String toString() {
         return String.format(
-                "[%d] %s | Type: %s | ID: %s | Department ID: %d | Contact: %s | Status: %s",
+                "[%d] %s | Type: %s | ID: %s | Department ID: %d"
+                        + " | Contact: %s | Status: %s",
                 recipientId,
                 recipientName,
                 recipientType,

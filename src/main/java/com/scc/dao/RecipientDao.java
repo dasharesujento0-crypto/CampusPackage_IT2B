@@ -7,60 +7,78 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class RecipientDao {
 
     public boolean registerRecipient(
             int departmentId,
-            String recipientName,
-            String recipientType,
+            String name,
+            String type,
             String identificationNumber,
             String contactNumber
     ) {
-        String sql = """
+        if (departmentId <= 0
+                || name == null || name.isBlank()
+                || type == null || type.isBlank()
+                || identificationNumber == null
+                || identificationNumber.isBlank()) {
+            System.out.println("Required recipient fields are missing.");
+            return false;
+        }
+
+        String checkSql = """
+                SELECT 1
+                FROM Department_Offices
+                WHERE Department_ID = ?
+                  AND Department_Status = 'ACTIVE'
+                """;
+
+        String insertSql = """
                 INSERT INTO Recipients
-                (Department_ID, Recipient_Name, Recipient_Type,
-                 Identification_Number, Contact_Number, Recipient_Status)
+                    (Department_ID, Recipient_Name, Recipient_Type,
+                     Identification_Number, Contact_Number, Recipient_Status)
                 VALUES (?, ?, ?, ?, ?, 'ACTIVE')
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection()) {
+        try (Connection connection = DatabaseConnection.getConnection()) {
 
-            // Make sure the selected department exists.
-            String checkSql = """
-                    SELECT 1 FROM Department_Offices
-                    WHERE Department_ID = ?
-                    """;
-
-            try (PreparedStatement check = conn.prepareStatement(checkSql)) {
+            try (PreparedStatement check =
+                         connection.prepareStatement(checkSql)) {
                 check.setInt(1, departmentId);
 
-                try (ResultSet rs = check.executeQuery()) {
-                    if (!rs.next()) {
-                        System.out.println("Registration failed: Department ID not found.");
+                try (ResultSet result = check.executeQuery()) {
+                    if (!result.next()) {
+                        System.out.println(
+                                "Active department or office not found."
+                        );
                         return false;
                     }
                 }
             }
 
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setInt(1, departmentId);
-                pstmt.setString(2, recipientName);
-                pstmt.setString(3, recipientType.toUpperCase());
-                pstmt.setString(4, identificationNumber);
+            try (PreparedStatement statement =
+                         connection.prepareStatement(insertSql)) {
+
+                statement.setInt(1, departmentId);
+                statement.setString(2, name.trim());
+                statement.setString(
+                        3, type.trim().toUpperCase(Locale.ROOT)
+                );
+                statement.setString(4, identificationNumber.trim());
 
                 if (contactNumber == null || contactNumber.isBlank()) {
-                    pstmt.setNull(5, java.sql.Types.VARCHAR);
+                    statement.setNull(5, Types.VARCHAR);
                 } else {
-                    pstmt.setString(5, contactNumber);
+                    statement.setString(5, contactNumber.trim());
                 }
 
-                int rowsAffected = pstmt.executeUpdate();
-
-                if (rowsAffected == 1) {
-                    System.out.println("Recipient registered successfully!");
+                if (statement.executeUpdate() == 1) {
+                    System.out.println("Recipient registered successfully.");
                     return true;
                 }
             }
@@ -85,26 +103,65 @@ public class RecipientDao {
                 ORDER BY Recipient_ID
                 """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
+        try (Connection connection = DatabaseConnection.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(sql)) {
 
-            while (rs.next()) {
+            while (result.next()) {
                 recipients.add(new Recipient(
-                        rs.getInt("Recipient_ID"),
-                        rs.getInt("Department_ID"),
-                        rs.getString("Recipient_Name"),
-                        rs.getString("Recipient_Type"),
-                        rs.getString("Identification_Number"),
-                        rs.getString("Contact_Number"),
-                        rs.getString("Recipient_Status")
+                        result.getInt("Recipient_ID"),
+                        result.getInt("Department_ID"),
+                        result.getString("Recipient_Name"),
+                        result.getString("Recipient_Type"),
+                        result.getString("Identification_Number"),
+                        result.getString("Contact_Number"),
+                        result.getString("Recipient_Status")
                 ));
             }
 
         } catch (SQLException e) {
-            System.out.println("Unable to load recipients: " + e.getMessage());
+            System.out.println(
+                    "Unable to load recipients: " + e.getMessage()
+            );
         }
 
         return recipients;
+    }
+
+    public boolean deactivate(int recipientId) {
+        if (recipientId <= 0) {
+            System.out.println("Invalid recipient ID.");
+            return false;
+        }
+
+        String sql = """
+                UPDATE Recipients
+                SET Recipient_Status = 'INACTIVE'
+                WHERE Recipient_ID = ?
+                  AND Recipient_Status = 'ACTIVE'
+                """;
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setInt(1, recipientId);
+
+            if (statement.executeUpdate() == 1) {
+                System.out.println("Recipient deactivated successfully.");
+                return true;
+            }
+
+            System.out.println(
+                    "No active recipient found with that ID."
+            );
+
+        } catch (SQLException e) {
+            System.out.println(
+                    "Recipient deactivation failed: " + e.getMessage()
+            );
+        }
+
+        return false;
     }
 }
