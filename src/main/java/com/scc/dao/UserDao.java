@@ -8,8 +8,24 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class UserDao {
+
+
+    public static final List<String> VALID_ROLES = List.of(
+            "SYSTEM_ADMINISTRATOR",
+            "PACKAGE_ADMINISTRATOR",
+            "PACKAGE_STAFF",
+            "DEPARTMENT_OFFICE_REPRESENTATIVE"
+    );
+
+
+    public static final List<String> VALID_STATUSES = List.of(
+            "PENDING",
+            "APPROVED",
+            "REJECTED"
+    );
 
     public boolean registerUser(String username, String password,
                                 String fullName, String role) {
@@ -73,7 +89,7 @@ public class UserDao {
         }
     }
 
-    /** Returns every account, regardless of role or status. */
+
     public List<User> getAllUsers() {
         List<User> users = new ArrayList<>();
         String sql = """
@@ -93,7 +109,6 @@ public class UserDao {
         return users;
     }
 
-    /** Returns pending accounts across all role types. */
     public List<User> getPendingUsers() {
         List<User> users = new ArrayList<>();
         String sql = """
@@ -114,7 +129,6 @@ public class UserDao {
         return users;
     }
 
-    /** Approves only an account that is currently pending. */
     public boolean approveUser(int userId) {
         if (userId <= 0) {
             System.out.println("User ID must be a positive number.");
@@ -143,7 +157,6 @@ public class UserDao {
         }
     }
 
-    /** Retained for the existing approve/reject workflow, using bound parameters. */
     public boolean updateAccountStatus(int userId, String newStatus) {
         if (newStatus == null ||
                 (!newStatus.equalsIgnoreCase("APPROVED") &&
@@ -170,6 +183,48 @@ public class UserDao {
             return false;
         } catch (SQLException e) {
             System.err.println("Error updating account status: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean updateUserRoleAndStatus(int userId, String newRole, String newStatus) {
+        if (userId <= 0) {
+            System.out.println("User ID must be a positive number.");
+            return false;
+        }
+        if (newRole == null || newRole.isBlank()
+                || newStatus == null || newStatus.isBlank()) {
+            System.out.println("Role and status cannot be empty.");
+            return false;
+        }
+
+        String role = newRole.trim().toUpperCase(Locale.ROOT);
+        String status = newStatus.trim().toUpperCase(Locale.ROOT);
+
+        if (!VALID_ROLES.contains(role)) {
+            System.out.println("Invalid role: " + role);
+            return false;
+        }
+        if (!VALID_STATUSES.contains(status)) {
+            System.out.println("Invalid status: " + status);
+            return false;
+        }
+
+        String sql = "UPDATE Users SET Role = ?, Account_Status = ? WHERE Users_ID = ?";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, role);
+            pstmt.setString(2, status);
+            pstmt.setInt(3, userId);
+            int updated = pstmt.executeUpdate();
+            if (updated == 1) {
+                return true;
+            }
+            System.out.println("Update failed: User ID " + userId + " was not found.");
+            return false;
+        } catch (SQLException e) {
+            System.err.println("Error updating user: " + e.getMessage());
             return false;
         }
     }

@@ -1,4 +1,3 @@
-
 package com.scc.ui;
 
 import com.scc.dao.DepartmentDao;
@@ -144,7 +143,7 @@ public class CampXpressUI {
 
                 case "7":
                     if ("SYSTEM_ADMINISTRATOR".equalsIgnoreCase(user.role())) {
-                        new AdminMenu(sc, userDao).run();
+                        new AdminMenu(sc, userDao, user).run();
                     } else {
                         System.out.println(
                                 "Access denied. Only the System Administrator can manage account approvals."
