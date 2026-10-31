@@ -124,7 +124,12 @@ public class AdminMenu {
                 }
                 return value;
             } catch (NumberFormatException e) {
-                System.out.println("Invalid input. Please enter a whole number, or 0 to cancel.");
+                if (input.matches("[+-]?\\d+")) {
+                    // digits only, so the value is too large/small for an int
+                    System.out.println("Invalid input. That number is out of range. Enter a valid User ID, or 0 to cancel.");
+                } else {
+                    System.out.println("Invalid input. Please enter a whole number, or 0 to cancel.");
+                }
             }
         }
     }
@@ -143,7 +148,7 @@ public class AdminMenu {
      * or null if the user cancelled with 0.
      */
     private String readValidStatus() {
-        List<String> statuses = UserDao.VALID_STATUSES;
+        List<String> statuses = UserDao.UPDATE_STATUSES;
         return readChoice("Select new account status:", "Status", statuses);
     }
 

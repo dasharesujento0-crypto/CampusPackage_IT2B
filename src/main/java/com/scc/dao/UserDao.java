@@ -27,8 +27,31 @@ public class UserDao {
             "REJECTED"
     );
 
+    /**
+     * Statuses the administrator may assign through the Deliverable 7
+     * "Update User (Role & Status)" workflow. REJECTED stays in VALID_STATUSES
+     * because the older account-approval code (updateAccountStatus) still uses it.
+     */
+    public static final List<String> UPDATE_STATUSES = List.of(
+            "APPROVED",
+            "PENDING"
+    );
+
+    /** The only roles a person may pick for themselves during public registration. */
+    public static final List<String> PUBLIC_REGISTRATION_ROLES = List.of(
+            "PACKAGE_STAFF",
+            "DEPARTMENT_OFFICE_REPRESENTATIVE"
+    );
+
     public boolean registerUser(String username, String password,
                                 String fullName, String role) {
+        // Public registration can never create an administrator account.
+        String normalizedRole = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
+        if (!PUBLIC_REGISTRATION_ROLES.contains(normalizedRole)) {
+            System.out.println("Registration failed: that role cannot be chosen during registration.");
+            return false;
+        }
+
         String sql = """
                 INSERT INTO Users
                 (Username, Password, Full_Name, Role, Account_Status)
@@ -40,7 +63,7 @@ public class UserDao {
             pstmt.setString(1, username);
             pstmt.setString(2, password);
             pstmt.setString(3, fullName);
-            pstmt.setString(4, role.toUpperCase());
+            pstmt.setString(4, normalizedRole);
             pstmt.executeUpdate();
             System.out.println("-> Successful registration! Waiting for approval.");
             return true;
@@ -205,8 +228,8 @@ public class UserDao {
             System.out.println("Invalid role: " + role);
             return false;
         }
-        if (!VALID_STATUSES.contains(status)) {
-            System.out.println("Invalid status: " + status);
+        if (!UPDATE_STATUSES.contains(status)) {
+            System.out.println("Invalid status: " + status + ". Use APPROVED or PENDING.");
             return false;
         }
 
@@ -225,6 +248,60 @@ public class UserDao {
             return false;
         } catch (SQLException e) {
             System.err.println("Error updating user: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * True if any SYSTEM_ADMINISTRATOR account exists (whatever its status).
+     * Fails closed: on a database error it reports true so that first-run
+     * setup is never offered when the answer is uncertain.
+     */
+    public boolean hasSystemAdministrator() {
+        String sql = "SELECT 1 FROM Users WHERE UPPER(Role) = 'SYSTEM_ADMINISTRATOR' LIMIT 1";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+            return rs.next();
+        } catch (SQLException e) {
+            System.err.println("Error checking for an administrator: " + e.getMessage());
+            return true;
+        }
+    }
+
+    /**
+     * Creates the very first SYSTEM_ADMINISTRATOR (APPROVED). The check and the
+     * insert are ONE statement, so it can never add a second administrator or
+     * touch an existing account: if an administrator already exists, nothing is
+     * inserted and false is returned.
+     */
+    public boolean createInitialAdministrator(String username, String password,
+                                              String fullName) {
+        if (username == null || username.isBlank()
+                || password == null || password.isEmpty()
+                || fullName == null || fullName.isBlank()) {
+            System.out.println("Username, password, and full name cannot be empty.");
+            return false;
+        }
+
+        String sql = """
+                INSERT INTO Users
+                (Username, Password, Full_Name, Role, Account_Status)
+                SELECT ?, ?, ?, 'SYSTEM_ADMINISTRATOR', 'APPROVED'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM Users WHERE UPPER(Role) = 'SYSTEM_ADMINISTRATOR'
+                )
+                """;
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, username.trim());
+            pstmt.setString(2, password);
+            pstmt.setString(3, fullName.trim());
+            return pstmt.executeUpdate() == 1;
+        } catch (SQLException e) {
+            System.err.println("Administrator setup failed: " + e.getMessage());
             return false;
         }
     }

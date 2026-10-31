@@ -1,5 +1,6 @@
 package com.scc.ui;
 
+import com.scc.dao.DatabaseConnection;
 import com.scc.dao.DepartmentDao;
 import com.scc.dao.PackageDao;
 import com.scc.dao.RecipientDao;
@@ -9,7 +10,10 @@ import com.scc.model.PackageItem;
 import com.scc.model.Recipient;
 import com.scc.model.User;
 
+import java.io.Console;
+import java.util.Arrays;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Scanner;
 
 public class CampXpressUI {
@@ -23,6 +27,9 @@ public class CampXpressUI {
     // ================= MAIN MENU =================
 
     public void run() {
+        // One-time local setup; does nothing once a System Administrator exists.
+        firstRunAdminSetup();
+
         boolean running = true;
 
         while (running) {
@@ -67,6 +74,113 @@ public class CampXpressUI {
         sc.close();
     }
 
+    // ================= FIRST-RUN ADMIN SETUP =================
+
+    /**
+     * One-time, local setup that creates the initial SYSTEM_ADMINISTRATOR.
+     * It is offered only while no SYSTEM_ADMINISTRATOR exists, and
+     * UserDao.createInitialAdministrator() refuses to insert once one does,
+     * so it cannot create extra administrators or overwrite an existing one.
+     * It is not part of public registration.
+     */
+    private void firstRunAdminSetup() {
+        if (userDao.hasSystemAdministrator()) {
+            return;
+        }
+
+        System.out.println("\n========================================");
+        System.out.println("     FIRST-RUN ADMINISTRATOR SETUP");
+        System.out.println("========================================");
+        System.out.println("No System Administrator account exists yet.");
+        System.out.println("Database file: " + DatabaseConnection.getDatabasePath());
+        System.out.println("Whoever completes this step on this computer becomes");
+        System.out.println("the initial System Administrator.");
+        System.out.println("Enter 0 at the full name or username prompt to skip.");
+        System.out.println("Setup will be offered again on the next launch.");
+
+        try {
+            while (true) {
+                String fullName = readSetupText("\nAdministrator full name: ", "Full name");
+                if (fullName == null) {
+                    return;
+                }
+                String username = readSetupText("Administrator username: ", "Username");
+                if (username == null) {
+                    return;
+                }
+                String password = readSetupPassword();
+
+                if (userDao.createInitialAdministrator(username, password, fullName)) {
+                    System.out.println("\nSUCCESS: Initial System Administrator '"
+                            + username + "' created (APPROVED).");
+                    System.out.println("You can now log in with these credentials.");
+                    return;
+                }
+
+                if (userDao.hasSystemAdministrator()) {
+                    System.out.println("A System Administrator already exists. Setup is closed.");
+                    return;
+                }
+                System.out.println("The administrator could not be created. Please try again.");
+            }
+        } catch (NoSuchElementException e) {
+            System.out.println("\nInput ended. Setup skipped.");
+        }
+    }
+
+    /** Returns the trimmed text, or null if the operator typed 0 to skip. */
+    private String readSetupText(String prompt, String label) {
+        while (true) {
+            System.out.print(prompt);
+            String input = sc.nextLine().trim();
+            if (input.equals("0")) {
+                System.out.println("Setup skipped.");
+                return null;
+            }
+            if (!input.isEmpty()) {
+                return input;
+            }
+            System.out.println(label + " cannot be empty. Enter a value, or 0 to skip.");
+        }
+    }
+
+    private String readSetupPassword() {
+        final int minLength = 8;
+
+        if (System.console() == null) {
+            System.out.println("Note: this console cannot hide typed characters.");
+        }
+        while (true) {
+            String password = readSecret("Password (min " + minLength + " characters): ");
+            if (password.length() < minLength) {
+                System.out.println("Password must be at least " + minLength + " characters.");
+                continue;
+            }
+            String confirm = readSecret("Confirm password: ");
+            if (!password.equals(confirm)) {
+                System.out.println("Passwords do not match. Try again.");
+                continue;
+            }
+            return password;
+        }
+    }
+
+    /** Hidden input when a real terminal is available, otherwise a normal line. */
+    private String readSecret(String prompt) {
+        Console console = System.console();
+        if (console != null) {
+            char[] chars = console.readPassword("%s", prompt);
+            if (chars == null) {
+                throw new NoSuchElementException("input ended");
+            }
+            String secret = new String(chars);
+            Arrays.fill(chars, ' ');
+            return secret;
+        }
+        System.out.print(prompt);
+        return sc.nextLine();
+    }
+
     // ================= LOGIN =================
 
     private User login() {
@@ -102,7 +216,7 @@ public class CampXpressUI {
             System.out.println("4. Manage Packages");
 
             if ("SYSTEM_ADMINISTRATOR".equalsIgnoreCase(user.role())) {
-                System.out.println("7. Manage Account Approvals");
+                System.out.println("7. Manage User Accounts");
             }
 
             System.out.println("5. Logout");
@@ -146,7 +260,7 @@ public class CampXpressUI {
                         new AdminMenu(sc, userDao, user).run();
                     } else {
                         System.out.println(
-                                "Access denied. Only the System Administrator can manage account approvals."
+                                "Access denied. Only the System Administrator can manage user accounts."
                         );
                     }
                     break;
