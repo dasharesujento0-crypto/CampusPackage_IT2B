@@ -87,6 +87,51 @@ departments / offices, recipients, packages and the CSV export). The only role-s
 3. Log in to manage departments / offices, recipients and packages, and to export the package
    summary. The CSV report (`CampXpress_Report.csv`) is written to the launch folder.
 
+## Activity logging and system audit trail (Deliverable 8)
+
+Every important action is written to one table, `activity_logs`, by one class, `ActivityLogDao`
+(`logAction`, `getAllLogs`, `getLogsByUserId`). All SQL stays in the DAO layer and uses
+parameterized `PreparedStatement`s. The old `AuditLogDao` was removed; nothing else logs.
+
+| Category | Action type | Logged in |
+|---|---|---|
+| Authentication | `USER_LOGIN`, `USER_LOGOUT` | `Authentication.recordLogin/recordLogout`, called by `CampXpressUI` |
+| Account management | `USER_APPROVED`, `USER_UPDATED` | `UserDao.approveUser / updateAccountStatus / updateUserRoleAndStatus` |
+| Core business process | `PACKAGE_REGISTERED` | `PackageDao.registerPackage` |
+| Lifecycle / state change | `PKG_STATUS_UPDATED` | `PackageDao.updateStatus` (Package Management > 4. Update Package Status) |
+
+Also logged: `LOGS_CLEARED`, and (not reachable from the menu yet) `PACKAGE_CLAIMED`,
+`PACKAGE_RETURNED`, `PACKAGE_REMOVED`. The acting user is always the real logged-in `User`
+passed down from the UI into the DAO.
+
+Administrators: **7. Manage User Accounts > 5. View System Audit Logs** offers *View All System
+Logs*, *Filter Logs by User ID*, and *Clear All Historical Logs* (type `CLEAR` to confirm; one
+`LOGS_CLEARED` entry recording who cleared how many records always remains).
+
+### Database notes (deviation from the literal example)
+
+The checklist example says `user_id REFERENCES users(id) ON DELETE CASCADE`. This project's table
+is `Users` with primary key `Users_ID`, and it was **not** renamed or rebuilt. The foreign key
+actually implemented is:
+
+```
+FOREIGN KEY (user_id) REFERENCES Users(Users_ID) ON DELETE CASCADE
+```
+
+(`users(id)` was **not** implemented: SQLite would reject every insert with "foreign key mismatch".)
+`user_id` is nullable so historical `SYSTEM` entries, which had no user, are kept.
+`PRAGMA foreign_keys = ON` is set on every connection in `DatabaseConnection`.
+
+SQLite table names are case-insensitive, so the old `Activity_Logs` table and the new
+`activity_logs` are the same name. On startup `DatabaseInitializer` therefore migrates an old table
+once, inside one transaction: it saves a backup copy of the database
+(`CampusPackage.db.pre-audit-migration.bak`), renames the old table, creates the new one, copies
+every row (valid user links kept, NULL/orphan user ids become NULL, old username and details folded
+into `description`, old action types unchanged), checks the row counts and
+`PRAGMA foreign_key_check`, and only then drops the old table. Both earlier layouts are recognized
+(`Log_ID, User_ID, Username, Action, Details, Timestamp` and `id, user_id, username, action,
+timestamp`); an unknown layout is refused untouched. Once migrated it is never repeated.
+
 ## Security note
 
 Passwords are stored as plain text in the local SQLite file (as in earlier versions of this
