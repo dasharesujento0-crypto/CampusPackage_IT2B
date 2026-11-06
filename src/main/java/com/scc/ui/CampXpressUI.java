@@ -1,5 +1,6 @@
 package com.scc.ui;
 
+import com.scc.dao.ActivityLogDao;
 import com.scc.dao.DatabaseConnection;
 import com.scc.dao.DepartmentDao;
 import com.scc.dao.PackageDao;
@@ -13,6 +14,7 @@ import com.scc.model.User;
 import java.io.Console;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.NoSuchElementException;
 import java.util.Scanner;
 
@@ -23,6 +25,12 @@ public class CampXpressUI {
     private final DepartmentDao departmentDao = new DepartmentDao();
     private final RecipientDao recipientDao = new RecipientDao();
     private final PackageDao packageDao = new PackageDao();
+    private final ActivityLogDao activityLogDao = new ActivityLogDao();
+    private final Authentication authentication;
+
+    public CampXpressUI(Authentication authentication) {
+        this.authentication = java.util.Objects.requireNonNull(authentication, "authentication");
+    }
 
     // ================= MAIN MENU =================
 
@@ -49,6 +57,7 @@ public class CampXpressUI {
                     User loggedInUser = login();
 
                     if (loggedInUser != null) {
+                        authentication.recordLogin(loggedInUser);
                         running = userSession(loggedInUser);
                     }
                     break;
@@ -199,6 +208,10 @@ public class CampXpressUI {
 
     private boolean userSession(User user) {
         boolean loggedIn = true;
+        boolean keepRunning = true;
+        boolean isAdmin = "SYSTEM_ADMINISTRATOR".equalsIgnoreCase(user.role());
+        String logoutOption = isAdmin ? "6" : "5";
+        String exitOption = isAdmin ? "7" : "6";
 
         while (loggedIn) {
             System.out.println("\n========================================");
@@ -215,12 +228,12 @@ public class CampXpressUI {
             System.out.println("3. Manage Recipients");
             System.out.println("4. Manage Packages");
 
-            if ("SYSTEM_ADMINISTRATOR".equalsIgnoreCase(user.role())) {
-                System.out.println("7. Manage User Accounts");
+            if (isAdmin) {
+                System.out.println("5. Manage User Accounts");
             }
 
-            System.out.println("5. Logout");
-            System.out.println("6. Exit");
+            System.out.println(logoutOption + ". Logout");
+            System.out.println(exitOption + ". Exit");
             System.out.print("Choose an option: ");
 
             String choice = sc.nextLine().trim();
@@ -231,48 +244,42 @@ public class CampXpressUI {
                     break;
 
                 case "2":
-                    departmentMenu();
+                    departmentMenu(user);
                     break;
 
                 case "3":
-                    recipientMenu();
+                    recipientMenu(user);
                     break;
 
                 case "4":
-                    packageMenu();
-                    break;
-
-                case "5":
-                    loggedIn = false;
-                    System.out.println(
-                            "\nYou have logged out successfully."
-                    );
-                    break;
-
-                case "6":
-                    System.out.println(
-                            "\nThank you for using CampXpress. Goodbye!"
-                    );
-                    return false;
-
-                case "7":
-                    if ("SYSTEM_ADMINISTRATOR".equalsIgnoreCase(user.role())) {
-                        new AdminMenu(sc, userDao, user).run();
-                    } else {
-                        System.out.println(
-                                "Access denied. Only the System Administrator can manage user accounts."
-                        );
-                    }
+                    packageMenu(user);
                     break;
 
                 default:
-                    System.out.println(
-                            "\nInvalid option! Please choose a valid menu option."
-                    );
+                    if (isAdmin && choice.equals("5")) {
+                        new AdminMenu(sc, userDao, activityLogDao, user).run();
+                    } else if (choice.equals(logoutOption)) {
+                        loggedIn = false;
+                        System.out.println(
+                                "\nYou have logged out successfully."
+                        );
+                    } else if (choice.equals(exitOption)) {
+                        loggedIn = false;
+                        keepRunning = false;
+                        System.out.println(
+                                "\nThank you for using CampXpress. Goodbye!"
+                        );
+                    } else {
+                        System.out.println(
+                                "\nInvalid option! Please choose a valid menu option."
+                        );
+                    }
             }
         }
 
-        return true;
+        // Logout and Exit both end up here, so a session is logged out exactly once.
+        authentication.recordLogout(user);
+        return keepRunning;
     }
 
     // ================= ACCOUNT INFORMATION =================
@@ -369,7 +376,7 @@ public class CampXpressUI {
 
     // ================= DEPARTMENT MANAGEMENT =================
 
-    private void departmentMenu() {
+    private void departmentMenu(User user) {
         boolean inMenu = true;
 
         while (inMenu) {
@@ -385,7 +392,7 @@ public class CampXpressUI {
 
             switch (choice) {
                 case "1":
-                    registerDepartment();
+                    registerDepartment(user);
                     break;
 
                 case "2":
@@ -404,7 +411,7 @@ public class CampXpressUI {
         }
     }
 
-    private void registerDepartment() {
+    private void registerDepartment(User user) {
         System.out.println("\n--- REGISTER DEPARTMENT / OFFICE ---");
 
         System.out.print("Department name: ");
@@ -423,7 +430,7 @@ public class CampXpressUI {
             return;
         }
 
-        departmentDao.registerDepartment(name, type, contact);
+        departmentDao.registerDepartment(name, type, contact, user);
     }
 
     private void viewAllDepartments() {
@@ -447,7 +454,7 @@ public class CampXpressUI {
 
     // ================= RECIPIENT MANAGEMENT =================
 
-    private void recipientMenu() {
+    private void recipientMenu(User user) {
         boolean inMenu = true;
 
         while (inMenu) {
@@ -463,7 +470,7 @@ public class CampXpressUI {
 
             switch (choice) {
                 case "1":
-                    registerRecipient();
+                    registerRecipient(user);
                     break;
 
                 case "2":
@@ -482,7 +489,7 @@ public class CampXpressUI {
         }
     }
 
-    private void registerRecipient() {
+    private void registerRecipient(User user) {
         System.out.println("\n--- REGISTER RECIPIENT ---");
 
         List<Department> departments = departmentDao.getAllDepartments();
@@ -578,7 +585,8 @@ public class CampXpressUI {
                 name,
                 type,
                 identificationNumber,
-                contactNumber
+                contactNumber,
+                user
         );
     }
 
@@ -603,7 +611,7 @@ public class CampXpressUI {
 
     // ================= PACKAGE MANAGEMENT =================
 
-    private void packageMenu() {
+    private void packageMenu(User user) {
         boolean inMenu = true;
 
         while (inMenu) {
@@ -613,14 +621,15 @@ public class CampXpressUI {
             System.out.println("1. Register Package");
             System.out.println("2. View All Packages");
             System.out.println("3. Export Package Summary to CSV");
-            System.out.println("4. Back to Home");
+            System.out.println("4. Update Package Status");
+            System.out.println("5. Back to Home");
             System.out.print("Choose an option: ");
 
             String choice = sc.nextLine().trim();
 
             switch (choice) {
                 case "1":
-                    registerPackage();
+                    registerPackage(user);
                     break;
 
                 case "2":
@@ -632,18 +641,22 @@ public class CampXpressUI {
                     break;
 
                 case "4":
+                    updatePackageStatus(user);
+                    break;
+
+                case "5":
                     inMenu = false;
                     break;
 
                 default:
                     System.out.println(
-                            "Invalid option! Please choose 1, 2, 3, or 4."
+                            "Invalid option! Please choose 1, 2, 3, 4, or 5."
                     );
             }
         }
     }
 
-    private void registerPackage() {
+    private void registerPackage(User user) {
         System.out.println("\n--- REGISTER PACKAGE ---");
 
         List<Recipient> recipients = recipientDao.getAllRecipients();
@@ -716,7 +729,8 @@ public class CampXpressUI {
                 trackingNumber,
                 senderName,
                 description,
-                dateReceived
+                dateReceived,
+                user
         );
     }
 
@@ -736,6 +750,139 @@ public class CampXpressUI {
         }
 
         System.out.println("\nTotal packages: " + packages.size());
+    }
+
+    // ================= UPDATE PACKAGE STATUS =================
+
+    private void updatePackageStatus(User user) {
+        System.out.println("\n--- UPDATE PACKAGE STATUS ---");
+
+        if (!PackageDao.STATUS_UPDATE_ROLES.contains(user.role().toUpperCase(Locale.ROOT))) {
+            System.out.println(
+                    "Access denied. Your role is not allowed to update package status."
+            );
+            return;
+        }
+
+        List<PackageItem> updatable = packageDao.getAllPackages().stream()
+                .filter(p -> PackageDao.UPDATABLE_STATUSES.contains(p.packageStatus()))
+                .toList();
+
+        if (updatable.isEmpty()) {
+            System.out.println("No packages with a changeable status were found.");
+            return;
+        }
+
+        for (PackageItem packageItem : updatable) {
+            System.out.println(packageItem);
+            System.out.println("----------------------------------------");
+        }
+
+        System.out.println("Enter 0 at any prompt to cancel.");
+
+        int packageId = readIdOrCancel("Package ID: ");
+        if (packageId == 0) {
+            System.out.println("Update cancelled.");
+            return;
+        }
+
+        PackageItem selected = updatable.stream()
+                .filter(p -> p.packageId() == packageId)
+                .findFirst()
+                .orElse(null);
+
+        if (selected == null) {
+            System.out.println("Package ID " + packageId
+                    + " is not in the list above. No changes made.");
+            return;
+        }
+
+        List<String> options = PackageDao.UPDATABLE_STATUSES.stream()
+                .filter(status -> !status.equals(selected.packageStatus()))
+                .toList();
+
+        String newStatus = readStatusChoice(selected, options);
+        if (newStatus == null) {
+            System.out.println("Update cancelled.");
+            return;
+        }
+
+        if (packageDao.updateStatus(selected.trackingNumber(), newStatus, user)) {
+            System.out.println("SUCCESS: Package " + selected.trackingNumber()
+                    + " changed from " + selected.packageStatus()
+                    + " to " + newStatus + ".");
+        } else {
+            System.out.println("FAILED: Package " + selected.trackingNumber()
+                    + " was not updated.");
+        }
+    }
+
+    /** Re-prompts until a whole number >= 0 is typed. Returns 0 to cancel (or if input ends). */
+    private int readIdOrCancel(String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            String input;
+            try {
+                input = sc.nextLine().trim();
+            } catch (NoSuchElementException e) {
+                return 0;
+            }
+
+            try {
+                int value = Integer.parseInt(input);
+                if (value < 0) {
+                    System.out.println("Invalid input. Enter a positive whole number, or 0 to cancel.");
+                    continue;
+                }
+                return value;
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input. Please enter a whole number, or 0 to cancel.");
+            }
+        }
+    }
+
+    /** Returns the chosen status (by number or name), or null if cancelled. */
+    private String readStatusChoice(PackageItem selected, List<String> options) {
+        while (true) {
+            System.out.println("\nCurrent status of " + selected.trackingNumber()
+                    + ": " + selected.packageStatus());
+            System.out.println("Select new status:");
+            for (int i = 0; i < options.size(); i++) {
+                System.out.println("  [" + (i + 1) + "] " + options.get(i));
+            }
+            System.out.println("  [0] Cancel");
+            System.out.print("Status (number or name): ");
+
+            String input;
+            try {
+                input = sc.nextLine().trim();
+            } catch (NoSuchElementException e) {
+                return null;
+            }
+
+            if (input.equals("0")) {
+                return null;
+            }
+
+            try {
+                int number = Integer.parseInt(input);
+                if (number >= 1 && number <= options.size()) {
+                    return options.get(number - 1);
+                }
+            } catch (NumberFormatException ignored) {
+                // not a number: try it as a name below
+            }
+
+            for (String option : options) {
+                if (option.equalsIgnoreCase(input)) {
+                    return option;
+                }
+            }
+
+            System.out.println(
+                    "Invalid status. Choose a number from the list, type a valid name, or 0 to cancel."
+            );
+        }
     }
 
     // ================= CSV EXPORT =================
@@ -769,7 +916,7 @@ public class CampXpressUI {
 
     // ================= ACCOUNT APPROVAL =================
 
-    private void accountApprovalMenu() {
+    private void accountApprovalMenu(User admin) {
         boolean inMenu = true;
 
         while (inMenu) {
@@ -847,7 +994,7 @@ public class CampXpressUI {
                     String newStatus =
                             choice.equals("1") ? "APPROVED" : "REJECTED";
 
-                    userDao.updateAccountStatus(userId, newStatus);
+                    userDao.updateAccountStatus(userId, newStatus, admin);
                     break;
 
                 case "3":

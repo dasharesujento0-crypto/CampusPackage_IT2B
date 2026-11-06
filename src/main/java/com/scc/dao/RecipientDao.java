@@ -1,7 +1,7 @@
-
 package com.scc.dao;
 
 import com.scc.model.Recipient;
+import com.scc.model.User;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -12,16 +12,21 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 public class RecipientDao {
+
+    private final ActivityLogDao activityLogDao = new ActivityLogDao();
 
     public boolean registerRecipient(
             int departmentId,
             String name,
             String type,
             String identificationNumber,
-            String contactNumber
+            String contactNumber,
+            User actor
     ) {
+        Objects.requireNonNull(actor, "actor");
         if (departmentId <= 0
                 || name == null || name.isBlank()
                 || type == null || type.isBlank()
@@ -78,6 +83,12 @@ public class RecipientDao {
                 }
 
                 if (statement.executeUpdate() == 1) {
+                    activityLogDao.logAction(
+                            actor.id(), "RECIPIENT_CREATED",
+                            "User " + actor.username() + " (ID: " + actor.id()
+                                    + ") registered recipient " + name.trim()
+                                    + " (Department ID: " + departmentId + ")."
+                    );
                     System.out.println("Recipient registered successfully.");
                     return true;
                 }

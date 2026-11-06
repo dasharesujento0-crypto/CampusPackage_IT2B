@@ -9,9 +9,14 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 public class UserDao {
 
+    private final ActivityLogDao activityLogDao = new ActivityLogDao();
+
+    private record UserSnapshot(String username, String role, String status) {
+    }
 
     public static final List<String> VALID_ROLES = List.of(
             "SYSTEM_ADMINISTRATOR",
@@ -20,24 +25,17 @@ public class UserDao {
             "DEPARTMENT_OFFICE_REPRESENTATIVE"
     );
 
-
     public static final List<String> VALID_STATUSES = List.of(
             "PENDING",
             "APPROVED",
             "REJECTED"
     );
 
-    /**
-     * Statuses the administrator may assign through the Deliverable 7
-     * "Update User (Role & Status)" workflow. REJECTED stays in VALID_STATUSES
-     * because the older account-approval code (updateAccountStatus) still uses it.
-     */
     public static final List<String> UPDATE_STATUSES = List.of(
             "APPROVED",
             "PENDING"
     );
 
-    /** The only roles a person may pick for themselves during public registration. */
     public static final List<String> PUBLIC_REGISTRATION_ROLES = List.of(
             "PACKAGE_STAFF",
             "DEPARTMENT_OFFICE_REPRESENTATIVE"
@@ -112,7 +110,6 @@ public class UserDao {
         }
     }
 
-
     public List<User> getAllUsers() {
         List<User> users = new ArrayList<>();
         String sql = """
@@ -152,7 +149,8 @@ public class UserDao {
         return users;
     }
 
-    public boolean approveUser(int userId) {
+    public boolean approveUser(int userId, User admin) {
+        Objects.requireNonNull(admin, "admin");
         if (userId <= 0) {
             System.out.println("User ID must be a positive number.");
             return false;
@@ -166,11 +164,23 @@ public class UserDao {
 
         try (Connection conn = DatabaseConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            UserSnapshot target = findUser(conn, userId);
             pstmt.setInt(1, userId);
-            int updated = pstmt.executeUpdate();
-            if (updated == 1) {
-                System.out.println("SUCCESS: User ID " + userId + " has been approved.");
-                return true;
+            conn.setAutoCommit(false);
+            try {
+                int updated = pstmt.executeUpdate();
+                if (updated == 1) {
+                    activityLogDao.logAction(conn, admin.id(), "USER_APPROVED",
+                            adminLabel(admin) + " approved account for "
+                                    + targetLabel(target, userId) + ".");
+                    conn.commit();
+                    System.out.println("SUCCESS: User ID " + userId + " has been approved.");
+                    return true;
+                }
+                conn.rollback();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
             }
             System.out.println("Approval failed: User ID not found or account is no longer pending.");
             return false;
@@ -180,7 +190,8 @@ public class UserDao {
         }
     }
 
-    public boolean updateAccountStatus(int userId, String newStatus) {
+    public boolean updateAccountStatus(int userId, String newStatus, User admin) {
+        Objects.requireNonNull(admin, "admin");
         if (newStatus == null ||
                 (!newStatus.equalsIgnoreCase("APPROVED") &&
                         !newStatus.equalsIgnoreCase("REJECTED"))) {
@@ -195,12 +206,31 @@ public class UserDao {
 
         try (Connection conn = DatabaseConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            UserSnapshot target = findUser(conn, userId);
             pstmt.setString(1, newStatus.toUpperCase());
             pstmt.setInt(2, userId);
-            int updated = pstmt.executeUpdate();
-            if (updated == 1) {
-                System.out.println("Account status updated to " + newStatus.toUpperCase() + ".");
-                return true;
+            conn.setAutoCommit(false);
+            try {
+                int updated = pstmt.executeUpdate();
+                if (updated == 1) {
+                    if (newStatus.equalsIgnoreCase("APPROVED")) {
+                        activityLogDao.logAction(conn, admin.id(), "USER_APPROVED",
+                                adminLabel(admin) + " approved account for "
+                                        + targetLabel(target, userId) + ".");
+                    } else {
+                        activityLogDao.logAction(conn, admin.id(), "USER_UPDATED",
+                                adminLabel(admin) + " rejected account for "
+                                        + targetLabel(target, userId)
+                                        + ": status PENDING -> REJECTED.");
+                    }
+                    conn.commit();
+                    System.out.println("Account status updated to " + newStatus.toUpperCase() + ".");
+                    return true;
+                }
+                conn.rollback();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
             }
             System.out.println("Account not found or is no longer pending.");
             return false;
@@ -210,7 +240,9 @@ public class UserDao {
         }
     }
 
-    public boolean updateUserRoleAndStatus(int userId, String newRole, String newStatus) {
+    public boolean updateUserRoleAndStatus(int userId, String newRole, String newStatus,
+                                           User admin) {
+        Objects.requireNonNull(admin, "admin");
         if (userId <= 0) {
             System.out.println("User ID must be a positive number.");
             return false;
@@ -237,12 +269,27 @@ public class UserDao {
 
         try (Connection conn = DatabaseConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            UserSnapshot target = findUser(conn, userId);
             pstmt.setString(1, role);
             pstmt.setString(2, status);
             pstmt.setInt(3, userId);
-            int updated = pstmt.executeUpdate();
-            if (updated == 1) {
-                return true;
+            conn.setAutoCommit(false);
+            try {
+                int updated = pstmt.executeUpdate();
+                if (updated == 1) {
+                    String oldRole = target == null ? null : target.role();
+                    String oldStatus = target == null ? null : target.status();
+                    activityLogDao.logAction(conn, admin.id(), "USER_UPDATED",
+                            adminLabel(admin) + " updated " + targetLabel(target, userId) + ": "
+                                    + change("role", oldRole, role) + "; "
+                                    + change("status", oldStatus, status) + ".");
+                    conn.commit();
+                    return true;
+                }
+                conn.rollback();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
             }
             System.out.println("Update failed: User ID " + userId + " was not found.");
             return false;
@@ -252,11 +299,6 @@ public class UserDao {
         }
     }
 
-    /**
-     * True if any SYSTEM_ADMINISTRATOR account exists (whatever its status).
-     * Fails closed: on a database error it reports true so that first-run
-     * setup is never offered when the answer is uncertain.
-     */
     public boolean hasSystemAdministrator() {
         String sql = "SELECT 1 FROM Users WHERE UPPER(Role) = 'SYSTEM_ADMINISTRATOR' LIMIT 1";
 
@@ -270,12 +312,6 @@ public class UserDao {
         }
     }
 
-    /**
-     * Creates the very first SYSTEM_ADMINISTRATOR (APPROVED). The check and the
-     * insert are ONE statement, so it can never add a second administrator or
-     * touch an existing account: if an administrator already exists, nothing is
-     * inserted and false is returned.
-     */
     public boolean createInitialAdministrator(String username, String password,
                                               String fullName) {
         if (username == null || username.isBlank()
@@ -304,6 +340,40 @@ public class UserDao {
             System.err.println("Administrator setup failed: " + e.getMessage());
             return false;
         }
+    }
+
+    private UserSnapshot findUser(Connection conn, int userId) throws SQLException {
+        String sql = "SELECT Username, Role, Account_Status FROM Users WHERE Users_ID = ?";
+
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, userId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (!rs.next()) {
+                    return null;
+                }
+                return new UserSnapshot(rs.getString("Username"),
+                        rs.getString("Role"), rs.getString("Account_Status"));
+            }
+        }
+    }
+
+    private static String adminLabel(User admin) {
+        return "Admin " + admin.username() + " (ID: " + admin.id() + ")";
+    }
+
+    private static String targetLabel(UserSnapshot target, int userId) {
+        String name = target == null ? "unknown user" : target.username();
+        return name + " (User ID: " + userId + ")";
+    }
+
+    private static String change(String label, String oldValue, String newValue) {
+        if (oldValue == null) {
+            return label + " set to " + newValue;
+        }
+        if (oldValue.equals(newValue)) {
+            return label + " unchanged (" + newValue + ")";
+        }
+        return label + " " + oldValue + " -> " + newValue;
     }
 
     private User mapUser(ResultSet rs) throws SQLException {

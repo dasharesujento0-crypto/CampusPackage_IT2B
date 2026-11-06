@@ -1,6 +1,7 @@
 package com.scc.dao;
 
 import com.scc.model.Department;
+import com.scc.model.User;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -9,14 +10,19 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public class DepartmentDao {
+
+    private final ActivityLogDao activityLogDao = new ActivityLogDao();
 
     public boolean registerDepartment(
             String name,
             String type,
-            String contact
+            String contact,
+            User actor
     ) {
+        Objects.requireNonNull(actor, "actor");
         if (name == null || name.isBlank()
                 || type == null || type.isBlank()
                 || contact == null || contact.isBlank()) {
@@ -39,7 +45,17 @@ public class DepartmentDao {
             statement.setString(2, type.trim());
             statement.setString(3, contact.trim());
 
-            return statement.executeUpdate() == 1;
+            if (statement.executeUpdate() == 1) {
+                activityLogDao.logAction(
+                        actor.id(), "DEPARTMENT_CREATED",
+                        "User " + actor.username() + " (ID: " + actor.id()
+                                + ") registered department/office "
+                                + name.trim() + " (" + type.trim() + ")."
+                );
+                return true;
+            }
+
+            return false;
 
         } catch (SQLException e) {
             System.out.println(

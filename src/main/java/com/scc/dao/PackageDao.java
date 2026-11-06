@@ -1,6 +1,7 @@
 package com.scc.dao;
 
 import com.scc.model.PackageItem;
+import com.scc.model.User;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -15,19 +16,40 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 public class PackageDao {
 
-    private final AuditLogDao auditLogDao = new AuditLogDao();
+    /** Statuses a package may be moved between by the "Update Package Status" workflow. */
+    public static final List<String> UPDATABLE_STATUSES = List.of(
+            "RECEIVED",
+            "STORED",
+            "UNCLAIMED"
+    );
+
+    /** Roles allowed to change a package's status (department representatives may not). */
+    public static final Set<String> STATUS_UPDATE_ROLES = Set.of(
+            "SYSTEM_ADMINISTRATOR",
+            "PACKAGE_ADMINISTRATOR",
+            "PACKAGE_STAFF"
+    );
+
+    private final ActivityLogDao activityLogDao = new ActivityLogDao();
+
+    private static String who(User actor) {
+        return "User " + actor.username() + " (ID: " + actor.id() + ")";
+    }
 
     public boolean registerPackage(
             int recipientId,
             String trackingNumber,
             String senderName,
             String description,
-            String dateReceived
+            String dateReceived,
+            User actor
     ) {
+        Objects.requireNonNull(actor, "actor");
         if (recipientId <= 0
                 || blank(trackingNumber)
                 || blank(senderName)
@@ -56,13 +78,24 @@ public class PackageDao {
             statement.setString(4, dateReceived.trim());
             statement.setInt(5, recipientId);
 
-            if (statement.executeUpdate() == 1) {
-                auditLogDao.log(
-                        null, "SYSTEM", "PACKAGE_REGISTERED",
-                        trackingNumber.trim()
-                );
-                System.out.println("Package registered successfully.");
-                return true;
+            connection.setAutoCommit(false);
+
+            try {
+                if (statement.executeUpdate() == 1) {
+                    activityLogDao.logAction(
+                            connection, actor.id(), "PACKAGE_REGISTERED",
+                            who(actor) + " registered package "
+                                    + trackingNumber.trim()
+                                    + " for Recipient ID " + recipientId + "."
+                    );
+                    connection.commit();
+                    System.out.println("Package registered successfully.");
+                    return true;
+                }
+                connection.rollback();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
             }
 
             System.out.println(
@@ -137,37 +170,97 @@ public class PackageDao {
         return packages;
     }
 
-    public boolean updateStatus(String trackingNumber, String newStatus) {
+    public boolean updateStatus(String trackingNumber, String newStatus, User actor) {
+        Objects.requireNonNull(actor, "actor");
+
         if (blank(trackingNumber) || blank(newStatus)) {
             return false;
         }
 
         String status = newStatus.trim().toUpperCase(Locale.ROOT);
 
-        if (!Set.of("RECEIVED", "STORED", "UNCLAIMED").contains(status)) {
+        if (!UPDATABLE_STATUSES.contains(status)) {
             System.out.println("Invalid package status.");
             return false;
         }
+
+        if (!STATUS_UPDATE_ROLES.contains(actor.role().toUpperCase(Locale.ROOT))) {
+            System.out.println(
+                    "Access denied. Your role is not allowed to update package status."
+            );
+            return false;
+        }
+
+        String selectSql = """
+                SELECT Package_ID, Package_Status
+                FROM Packages
+                WHERE Tracking_Number = ?
+                """;
 
         String sql = """
                 UPDATE Packages
                 SET Package_Status = ?
                 WHERE Tracking_Number = ?
-                  AND Package_Status IN ('RECEIVED', 'STORED', 'UNCLAIMED')
+                  AND Package_Status = ?
                 """;
 
-        try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (Connection connection = DatabaseConnection.getConnection()) {
 
-            statement.setString(1, status);
-            statement.setString(2, trackingNumber.trim());
+            int packageId;
+            String oldStatus;
 
-            if (statement.executeUpdate() == 1) {
-                auditLogDao.log(
-                        null, "SYSTEM", "PACKAGE_STATUS_UPDATED",
-                        trackingNumber.trim() + " -> " + status
+            try (PreparedStatement select = connection.prepareStatement(selectSql)) {
+                select.setString(1, trackingNumber.trim());
+
+                try (ResultSet result = select.executeQuery()) {
+                    if (!result.next()) {
+                        System.out.println(
+                                "Package not found or its status cannot be changed."
+                        );
+                        return false;
+                    }
+                    packageId = result.getInt("Package_ID");
+                    oldStatus = result.getString("Package_Status");
+                }
+            }
+
+            if (!UPDATABLE_STATUSES.contains(oldStatus)) {
+                System.out.println(
+                        "Package not found or its status cannot be changed."
                 );
-                return true;
+                return false;
+            }
+
+            if (oldStatus.equals(status)) {
+                System.out.println(
+                        "Package " + trackingNumber.trim()
+                                + " is already " + status + ". No change made."
+                );
+                return false;
+            }
+
+            connection.setAutoCommit(false);
+
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, status);
+                statement.setString(2, trackingNumber.trim());
+                statement.setString(3, oldStatus);
+
+                if (statement.executeUpdate() == 1) {
+                    activityLogDao.logAction(
+                            connection, actor.id(), "PKG_STATUS_UPDATED",
+                            who(actor) + " changed package "
+                                    + trackingNumber.trim()
+                                    + " (ID: " + packageId + ") status from "
+                                    + oldStatus + " to " + status + "."
+                    );
+                    connection.commit();
+                    return true;
+                }
+                connection.rollback();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
             }
 
             System.out.println(
@@ -187,8 +280,10 @@ public class PackageDao {
             String trackingNumber,
             String claimantName,
             String identification,
-            String dateClaimed
+            String dateClaimed,
+            User actor
     ) {
+        Objects.requireNonNull(actor, "actor");
         if (blank(trackingNumber) || blank(claimantName)
                 || blank(identification) || blank(dateClaimed)) {
             System.out.println("Claim details are required.");
@@ -213,13 +308,23 @@ public class PackageDao {
             statement.setString(3, dateClaimed.trim());
             statement.setString(4, trackingNumber.trim());
 
-            if (statement.executeUpdate() == 1) {
-                auditLogDao.log(
-                        null, "SYSTEM", "PACKAGE_CLAIMED",
-                        trackingNumber.trim()
-                                + "; claimant=" + claimantName.trim()
-                );
-                return true;
+            connection.setAutoCommit(false);
+
+            try {
+                if (statement.executeUpdate() == 1) {
+                    activityLogDao.logAction(
+                            connection, actor.id(), "PACKAGE_CLAIMED",
+                            who(actor) + " marked package "
+                                    + trackingNumber.trim()
+                                    + " as claimed by " + claimantName.trim() + "."
+                    );
+                    connection.commit();
+                    return true;
+                }
+                connection.rollback();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
             }
 
             System.out.println(
@@ -237,8 +342,10 @@ public class PackageDao {
 
     public boolean returnPackage(
             String trackingNumber,
-            String dateReturned
+            String dateReturned,
+            User actor
     ) {
+        Objects.requireNonNull(actor, "actor");
         if (blank(trackingNumber) || blank(dateReturned)) {
             return false;
         }
@@ -257,12 +364,22 @@ public class PackageDao {
             statement.setString(1, dateReturned.trim());
             statement.setString(2, trackingNumber.trim());
 
-            if (statement.executeUpdate() == 1) {
-                auditLogDao.log(
-                        null, "SYSTEM", "PACKAGE_RETURNED",
-                        trackingNumber.trim()
-                );
-                return true;
+            connection.setAutoCommit(false);
+
+            try {
+                if (statement.executeUpdate() == 1) {
+                    activityLogDao.logAction(
+                            connection, actor.id(), "PACKAGE_RETURNED",
+                            who(actor) + " marked package "
+                                    + trackingNumber.trim() + " as returned."
+                    );
+                    connection.commit();
+                    return true;
+                }
+                connection.rollback();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
             }
 
             System.out.println(
@@ -278,7 +395,8 @@ public class PackageDao {
         return false;
     }
 
-    public boolean softRemove(String trackingNumber) {
+    public boolean softRemove(String trackingNumber, User actor) {
+        Objects.requireNonNull(actor, "actor");
         if (blank(trackingNumber)) {
             return false;
         }
@@ -295,12 +413,22 @@ public class PackageDao {
 
             statement.setString(1, trackingNumber.trim());
 
-            if (statement.executeUpdate() == 1) {
-                auditLogDao.log(
-                        null, "SYSTEM", "PACKAGE_REMOVED",
-                        trackingNumber.trim()
-                );
-                return true;
+            connection.setAutoCommit(false);
+
+            try {
+                if (statement.executeUpdate() == 1) {
+                    activityLogDao.logAction(
+                            connection, actor.id(), "PACKAGE_REMOVED",
+                            who(actor) + " removed package "
+                                    + trackingNumber.trim() + "."
+                    );
+                    connection.commit();
+                    return true;
+                }
+                connection.rollback();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
             }
 
         } catch (SQLException e) {
@@ -362,8 +490,6 @@ public class PackageDao {
             );
         }
     }
-
-    // ================= CSV EXPORT =================
 
     public boolean exportSummaryCsv(String fromDate, String toDate) {
         if (blank(fromDate) || blank(toDate)
